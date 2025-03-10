@@ -21,6 +21,12 @@ metadata {
         capability "Refresh"
 
         // Custom commands
+        command "setDeviceMode", [[
+            name: "Mode*",
+            type: "ENUM",
+            description: "Set the device operating mode",
+            constraints: ["off", "manual", "timer"]
+        ]]
         command "setEffect", [[name:"Effect ID*", type:"NUMBER", description:"Effect ID to activate"]]
         command "setEffectSpeed", [[name:"Speed*", type:"NUMBER", description:"Speed (0-255)"]]
         command "previewBuiltinEffect", [
@@ -67,11 +73,13 @@ def parse(String description) {
 
 // Required capability methods
 def on() {
-    setDeviceSwitchState(1) // 1 = manual mode
+    // If we're already in timer mode, keep it, otherwise use manual mode
+    def targetMode = (state.deviceMode == "timer") ? "timer" : "manual"
+    setDeviceMode(targetMode)
 }
 
 def off() {
-    setDeviceSwitchState(0) // 0 = off
+    setDeviceMode("off")
 }
 
 def setLevel(level, duration=0) {
@@ -105,8 +113,17 @@ def refresh() {
     ])
     logDebug "refresh() response: ${result}"
     if (result) {
-        // Update device state based on response
+        // Map switchState to both switch and deviceMode
+        def modeMap = [
+            0: "off",
+            1: "manual",
+            2: "timer"
+        ]
+        def mode = modeMap[result.switchState] ?: "off"
+        state.deviceMode = mode
+        sendEvent(name: "deviceMode", value: mode)
         sendEvent(name: "switch", value: result.switchState == 0 ? "off" : "on")
+        logDebug "Updated device mode to: ${mode}"
         logDebug "Updated switch state to: ${result.switchState == 0 ? 'off' : 'on'}"
 
         if (result.currentEffect) {
@@ -187,6 +204,29 @@ def previewCustomEffect(mode, speed, brightness, pixels) {
 }
 
 // Private helper methods
+private setDeviceMode(String mode) {
+    logDebug "setDeviceMode(${mode})"
+    def modeMap = [
+        "off": 0,
+        "manual": 1,
+        "timer": 2
+    ]
+    def modeValue = modeMap[mode]
+    if (modeValue == null) {
+        log.error "Invalid mode: ${mode}"
+        return false
+    }
+
+    def result = setDeviceSwitchState(modeValue)
+    if (result) {
+        state.deviceMode = mode
+        // Update the switch capability state (on for manual/timer, off for off)
+        sendEvent(name: "deviceMode", value: mode)
+        return true
+    }
+    return false
+}
+
 private setDeviceSwitchState(state) {
     logDebug "setDeviceSwitchState(${state})"
     def result = apiRequest("/v1/oauth/resources/device/update", "POST", [
