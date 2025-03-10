@@ -101,9 +101,7 @@ def refresh() {
     logDebug "refresh()"
     def result = apiRequest("/v1/oauth/resources/device/get", "POST", [
         deviceId: deviceId,
-        payload: [
-            currentDate: getCurrentDate()
-        ]
+        currentDate: getCurrentDate()
     ])
     logDebug "refresh() response: ${result}"
     if (result) {
