@@ -231,7 +231,9 @@ private setDeviceSwitchState(state) {
     logDebug "setDeviceSwitchState(${state})"
     def result = apiRequest("/v1/oauth/resources/device/update", "POST", [
         deviceId: deviceId,
-        switchState: state
+        payload: [
+          switchState: state
+        ]
     ])
     if (result != null) {
         sendEvent(name: "switch", value: state == 0 ? "off" : "on")
