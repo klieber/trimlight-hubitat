@@ -232,6 +232,10 @@ private apiRequest(String path, String method = "GET", Map body = null) {
         params.body = groovy.json.JsonOutput.toJson(body)
     }
 
+    logDebug "API Request - URL: ${params.uri}"
+    logDebug "API Request - Headers: ${headers}"
+    logDebug "API Request - Body: ${params.body}"
+
     def response = []
     def semaphore = [:]
     synchronized(semaphore) {
@@ -250,10 +254,13 @@ private apiRequest(String path, String method = "GET", Map body = null) {
                     log.error "Unsupported HTTP method: ${method}"
                     return null
             }
+            logDebug "Waiting for response..."
             // Wait for the response with a timeout
             semaphore.wait(30000) // 30 second timeout
+            logDebug "Done waiting for response"
         } catch (e) {
             log.error "API request failed: ${e.message}"
+            log.error "Stack trace: ${e.getStackTrace()}"
             return null
         }
     }
@@ -262,6 +269,7 @@ private apiRequest(String path, String method = "GET", Map body = null) {
     if (response && response.size() > 0) {
         return response[0]
     }
+    logDebug "No response data received"
     return null
 }
 
@@ -271,26 +279,37 @@ private handleResponse(resp, data) {
 
     synchronized(semaphore) {
         try {
-            logDebug "Response status: ${resp.status}, data: ${resp.data}"
+            logDebug "Response received - Status: ${resp.status}"
+            logDebug "Response headers: ${resp.headers}"
+            logDebug "Response data: ${resp.data}"
+
             if (resp.status == 200) {
-                def jsonSlurper = new groovy.json.JsonSlurper()
-                def result = jsonSlurper.parseText(resp.data)
-                logDebug "Parsed response: ${result}"
-                if (result.code == 0) {
-                    response.add(result.payload)
+                if (resp.data) {
+                    def jsonSlurper = new groovy.json.JsonSlurper()
+                    def result = jsonSlurper.parseText(resp.data)
+                    logDebug "Parsed response: ${result}"
+                    if (result.code == 0) {
+                        response.add(result.payload)
+                        logDebug "Added payload to response"
+                    } else {
+                        log.error "API request failed with code ${result.code}: ${result.desc}"
+                    }
                 } else {
-                    log.error "API request failed: ${result.desc}"
+                    log.error "Response status 200 but no data received"
                 }
             } else {
                 log.error "API request failed with status ${resp.status}: ${resp.errorMessage}"
             }
         } catch (e) {
             log.error "Error processing response: ${e.message}"
+            log.error "Stack trace: ${e.getStackTrace()}"
             if (e.message.contains("parseText")) {
                 logDebug "Raw response data: ${resp.data}"
             }
+        } finally {
+            logDebug "Notifying semaphore"
+            semaphore.notify()
         }
-        semaphore.notify()
     }
 }
 
