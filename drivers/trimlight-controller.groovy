@@ -227,32 +227,60 @@ private apiRequest(String path, String method = "GET", Map body = null) {
         params.body = groovy.json.JsonOutput.toJson(body)
     }
 
-    try {
-        def response
-        switch (method.toUpperCase()) {
-            case "GET":
-                response = httpGet(params)
-                break
-            case "POST":
-                response = httpPost(params)
-                break
-            case "PUT":
-                response = httpPut(params)
-                break
-            default:
-                log.error "Unsupported HTTP method: ${method}"
-                return null
-        }
-
-        if (response?.data?.code == 0) {
-            return response.data.payload
-        } else {
-            log.error "API request failed: ${response?.data?.desc}"
+    def response = []
+    def semaphore = [:]
+    synchronized(semaphore) {
+        try {
+            switch (method.toUpperCase()) {
+                case "GET":
+                    asynchttpGet(handleResponse, params, [semaphore: semaphore, response: response])
+                    break
+                case "POST":
+                    asynchttpPost(handleResponse, params, [semaphore: semaphore, response: response])
+                    break
+                case "PUT":
+                    asynchttpPut(handleResponse, params, [semaphore: semaphore, response: response])
+                    break
+                default:
+                    log.error "Unsupported HTTP method: ${method}"
+                    return null
+            }
+            // Wait for the response with a timeout
+            semaphore.wait(30000) // 30 second timeout
+        } catch (e) {
+            log.error "API request failed: ${e.message}"
             return null
         }
-    } catch (e) {
-        log.error "API request failed: ${e.message}"
-        return null
+    }
+
+    // Return the response data if we got one
+    if (response && response.size() > 0) {
+        return response[0]
+    }
+    return null
+}
+
+private handleResponse(resp, data) {
+    def semaphore = data.semaphore
+    def response = data.response
+
+    synchronized(semaphore) {
+        try {
+            if (resp.status == 200) {
+                def jsonSlurper = new groovy.json.JsonSlurper()
+                def result = jsonSlurper.parseText(resp.data)
+                if (result.code == 0) {
+                    response.add(result.payload)
+                } else {
+                    log.error "API request failed: ${result.desc}"
+                }
+            } else {
+                log.error "API request failed with status ${resp.status}: ${resp.errorMessage}"
+            }
+        } catch (e) {
+            log.error "Error processing response: ${e.message}"
+        }
+        semaphore.notify()
     }
 }
 
