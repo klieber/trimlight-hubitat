@@ -103,18 +103,23 @@ def refresh() {
         deviceId: deviceId,
         currentDate: getCurrentDate()
     ])
+    logDebug "refresh() response: ${result}"
     if (result) {
         // Update device state based on response
         sendEvent(name: "switch", value: result.switchState == 0 ? "off" : "on")
+        logDebug "Updated switch state to: ${result.switchState == 0 ? 'off' : 'on'}"
 
         if (result.currentEffect) {
             state.currentEffect = result.currentEffect
             if (result.currentEffect.brightness) {
-                sendEvent(name: "level", value: Math.round(result.currentEffect.brightness / 2.55))
+                def level = Math.round(result.currentEffect.brightness / 2.55)
+                sendEvent(name: "level", value: level)
+                logDebug "Updated brightness level to: ${level}"
             }
         }
         return true
     }
+    logDebug "refresh() failed - no response data"
     return false
 }
 
@@ -266,9 +271,11 @@ private handleResponse(resp, data) {
 
     synchronized(semaphore) {
         try {
+            logDebug "Response status: ${resp.status}, data: ${resp.data}"
             if (resp.status == 200) {
                 def jsonSlurper = new groovy.json.JsonSlurper()
                 def result = jsonSlurper.parseText(resp.data)
+                logDebug "Parsed response: ${result}"
                 if (result.code == 0) {
                     response.add(result.payload)
                 } else {
@@ -279,6 +286,9 @@ private handleResponse(resp, data) {
             }
         } catch (e) {
             log.error "Error processing response: ${e.message}"
+            if (e.message.contains("parseText")) {
+                logDebug "Raw response data: ${resp.data}"
+            }
         }
         semaphore.notify()
     }
