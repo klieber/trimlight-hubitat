@@ -236,107 +236,42 @@ private apiRequest(String path, String method = "GET", Map body = null) {
     logDebug "API Request - Headers: ${headers}"
     logDebug "API Request - Body: ${params.body}"
 
-    def response = []
-    def semaphore = [:]
-    def requestStartTime = now()
-
-    synchronized(semaphore) {
-        try {
-            def handler = [semaphore: semaphore, response: response, startTime: requestStartTime]
-            switch (method.toUpperCase()) {
-                case "GET":
-                    asynchttpGet(handleResponse, params, handler)
-                    break
-                case "POST":
-                    asynchttpPost(handleResponse, params, handler)
-                    break
-                case "PUT":
-                    asynchttpPut(handleResponse, params, handler)
-                    break
-                default:
-                    log.error "Unsupported HTTP method: ${method}"
-                    return null
-            }
-            logDebug "Waiting for response... (timeout: 30s)"
-
-            // Wait for the response with a timeout
-            try {
-                semaphore.wait(30000) // 30 second timeout
-            } catch (InterruptedException e) {
-                log.error "Wait interrupted: ${e.message}"
-            }
-
-            def elapsed = now() - requestStartTime
-            logDebug "Done waiting for response (elapsed: ${elapsed}ms)"
-
-            if (elapsed >= 30000) {
-                log.error "Request timed out after ${elapsed}ms"
+    try {
+        def resp
+        switch (method.toUpperCase()) {
+            case "GET":
+                httpGet(params) { response -> resp = response }
+                break
+            case "POST":
+                httpPost(params) { response -> resp = response }
+                break
+            case "PUT":
+                httpPut(params) { response -> resp = response }
+                break
+            default:
+                log.error "Unsupported HTTP method: ${method}"
                 return null
-            }
-        } catch (e) {
-            log.error "API request failed: ${e.message}"
-            log.error "Stack trace: ${e.getStackTrace()}"
-            return null
         }
-    }
 
-    // Return the response data if we got one
-    if (response && response.size() > 0) {
-        return response[0]
-    }
-    logDebug "No response data received"
-    return null
-}
+        logDebug "Response received - Status: ${resp.status}"
+        logDebug "Response headers: ${resp.headers}"
 
-private handleResponse(resp, data) {
-    def startTime = data.startTime
-    def elapsed = now() - startTime
-    logDebug "Response received after ${elapsed}ms"
-
-    def semaphore = data.semaphore
-    def response = data.response
-
-    synchronized(semaphore) {
-        try {
-            logDebug "Response received - Status: ${resp.status}"
-            logDebug "Response headers: ${resp.headers}"
-
-            if (resp.json != null) {
-                logDebug "Response is JSON"
-                def result = resp.json
-                logDebug "Parsed response: ${result}"
-                if (result.code == 0) {
-                    response.add(result.payload)
-                    logDebug "Added payload to response"
-                } else {
-                    log.error "API request failed with code ${result.code}: ${result.desc}"
-                }
-            } else if (resp.data) {
-                logDebug "Response has data, attempting to parse"
-                def jsonSlurper = new groovy.json.JsonSlurper()
-                def result = jsonSlurper.parseText(resp.data)
-                logDebug "Parsed response: ${result}"
-                if (result.code == 0) {
-                    response.add(result.payload)
-                    logDebug "Added payload to response"
-                } else {
-                    log.error "API request failed with code ${result.code}: ${result.desc}"
-                }
+        if (resp.data) {
+            logDebug "Parsed response: ${resp.data}"
+            if (resp.data.code == 0) {
+                return resp.data.payload
             } else {
-                log.error "Response status ${resp.status} but no data received"
-                logDebug "Raw response: ${resp}"
+                log.error "API request failed with code ${resp.data.code}: ${resp.data.desc}"
             }
-        } catch (e) {
-            log.error "Error processing response: ${e.message}"
-            log.error "Stack trace: ${e.getStackTrace()}"
-            if (e.message.contains("parseText")) {
-                logDebug "Raw response data: ${resp.data}"
-            }
-        } finally {
-            logDebug "Notifying semaphore"
-            semaphore.notify()
+        } else {
+            log.error "Response status ${resp.status} but no data received"
+            logDebug "Raw response: ${resp}"
         }
+    } catch (e) {
+        log.error "API request failed: ${e.message}"
+        log.error "Stack trace: ${e.getStackTrace()}"
     }
+    return null
 }
 
 private calculateAccessToken(String clientId, String clientSecret, long timestamp) {
@@ -365,5 +300,5 @@ private getCurrentDate() {
 }
 
 private now() {
-    return System.currentTimeMillis()
+    return new Date().getTime()
 }
