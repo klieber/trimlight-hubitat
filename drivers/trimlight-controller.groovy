@@ -245,13 +245,13 @@ private apiRequest(String path, String method = "GET", Map body = null) {
             def handler = [semaphore: semaphore, response: response, startTime: requestStartTime]
             switch (method.toUpperCase()) {
                 case "GET":
-                    asynchttpGet("handleResponse", params, handler)
+                    asynchttpGet(handleResponse, params, handler)
                     break
                 case "POST":
-                    asynchttpPost("handleResponse", params, handler)
+                    asynchttpPost(handleResponse, params, handler)
                     break
                 case "PUT":
-                    asynchttpPut("handleResponse", params, handler)
+                    asynchttpPut(handleResponse, params, handler)
                     break
                 default:
                     log.error "Unsupported HTTP method: ${method}"
