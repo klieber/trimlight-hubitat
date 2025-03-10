@@ -217,7 +217,7 @@ private apiRequest(String path, String method = "GET", Map body = null) {
         "Accept": "application/json",
         "authorization": accessToken,
         "S-ClientId": clientId,
-        "S-Timestamp": timestamp
+        "S-Timestamp": "${timestamp}"  // Ensure timestamp is sent as string
     ]
 
     def params = [
@@ -238,26 +238,41 @@ private apiRequest(String path, String method = "GET", Map body = null) {
 
     def response = []
     def semaphore = [:]
+    def requestStartTime = now()
+
     synchronized(semaphore) {
         try {
+            def handler = [semaphore: semaphore, response: response, startTime: requestStartTime]
             switch (method.toUpperCase()) {
                 case "GET":
-                    asynchttpGet(handleResponse, params, [semaphore: semaphore, response: response])
+                    asynchttpGet("handleResponse", params, handler)
                     break
                 case "POST":
-                    asynchttpPost(handleResponse, params, [semaphore: semaphore, response: response])
+                    asynchttpPost("handleResponse", params, handler)
                     break
                 case "PUT":
-                    asynchttpPut(handleResponse, params, [semaphore: semaphore, response: response])
+                    asynchttpPut("handleResponse", params, handler)
                     break
                 default:
                     log.error "Unsupported HTTP method: ${method}"
                     return null
             }
-            logDebug "Waiting for response..."
+            logDebug "Waiting for response... (timeout: 30s)"
+
             // Wait for the response with a timeout
-            semaphore.wait(30000) // 30 second timeout
-            logDebug "Done waiting for response"
+            try {
+                semaphore.wait(30000) // 30 second timeout
+            } catch (InterruptedException e) {
+                log.error "Wait interrupted: ${e.message}"
+            }
+
+            def elapsed = now() - requestStartTime
+            logDebug "Done waiting for response (elapsed: ${elapsed}ms)"
+
+            if (elapsed >= 30000) {
+                log.error "Request timed out after ${elapsed}ms"
+                return null
+            }
         } catch (e) {
             log.error "API request failed: ${e.message}"
             log.error "Stack trace: ${e.getStackTrace()}"
@@ -274,6 +289,10 @@ private apiRequest(String path, String method = "GET", Map body = null) {
 }
 
 private handleResponse(resp, data) {
+    def startTime = data.startTime
+    def elapsed = now() - startTime
+    logDebug "Response received after ${elapsed}ms"
+
     def semaphore = data.semaphore
     def response = data.response
 
@@ -281,24 +300,31 @@ private handleResponse(resp, data) {
         try {
             logDebug "Response received - Status: ${resp.status}"
             logDebug "Response headers: ${resp.headers}"
-            logDebug "Response data: ${resp.data}"
 
-            if (resp.status == 200) {
-                if (resp.data) {
-                    def jsonSlurper = new groovy.json.JsonSlurper()
-                    def result = jsonSlurper.parseText(resp.data)
-                    logDebug "Parsed response: ${result}"
-                    if (result.code == 0) {
-                        response.add(result.payload)
-                        logDebug "Added payload to response"
-                    } else {
-                        log.error "API request failed with code ${result.code}: ${result.desc}"
-                    }
+            if (resp.json != null) {
+                logDebug "Response is JSON"
+                def result = resp.json
+                logDebug "Parsed response: ${result}"
+                if (result.code == 0) {
+                    response.add(result.payload)
+                    logDebug "Added payload to response"
                 } else {
-                    log.error "Response status 200 but no data received"
+                    log.error "API request failed with code ${result.code}: ${result.desc}"
+                }
+            } else if (resp.data) {
+                logDebug "Response has data, attempting to parse"
+                def jsonSlurper = new groovy.json.JsonSlurper()
+                def result = jsonSlurper.parseText(resp.data)
+                logDebug "Parsed response: ${result}"
+                if (result.code == 0) {
+                    response.add(result.payload)
+                    logDebug "Added payload to response"
+                } else {
+                    log.error "API request failed with code ${result.code}: ${result.desc}"
                 }
             } else {
-                log.error "API request failed with status ${resp.status}: ${resp.errorMessage}"
+                log.error "Response status ${resp.status} but no data received"
+                logDebug "Raw response: ${resp}"
             }
         } catch (e) {
             log.error "Error processing response: ${e.message}"
@@ -336,4 +362,8 @@ private getCurrentDate() {
         minutes: cal.get(Calendar.MINUTE),
         seconds: cal.get(Calendar.SECOND)
     ]
+}
+
+private now() {
+    return System.currentTimeMillis()
 }
