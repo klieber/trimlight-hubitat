@@ -42,6 +42,29 @@ metadata {
             [name:"Brightness*", type:"NUMBER", description:"Brightness (0-255)"],
             [name:"Pixels*", type:"JSON_OBJECT", description:"Array of pixel objects with index, count, color, and disable fields"]
         ]
+
+        // Schedule management commands
+        command "listSchedules", [[
+            name: "Enabled Only",
+            type: "BOOL",
+            description: "Only show enabled schedules"
+        ]]
+        command "addSchedule", [
+            [name:"Effect ID*", type:"NUMBER", description:"Effect ID to use"],
+            [name:"Start Time*", type:"STRING", description:"Start time in HH:mm format"],
+            [name:"End Time*", type:"STRING", description:"End time in HH:mm format"],
+            [name:"Days*", type:"STRING", description:"Days of week (e.g. 1,2,3,4,5 for Mon-Fri)"],
+            [name:"Enabled", type:"BOOL", description:"Whether schedule is enabled", defaultValue: true]
+        ]
+        command "deleteSchedule", [[
+            name:"Schedule ID*",
+            type:"NUMBER",
+            description:"ID of schedule to delete"
+        ]]
+        command "toggleSchedule", [
+            [name:"Schedule ID*", type:"NUMBER", description:"ID of schedule to toggle"],
+            [name:"Enabled*", type:"BOOL", description:"Enable or disable schedule"]
+        ]
     }
 
     preferences {
@@ -201,6 +224,109 @@ def previewCustomEffect(mode, speed, brightness, pixels) {
         ]
     ])
     return result != null
+}
+
+// Schedule management methods
+def listSchedules(Boolean enabledOnly = false) {
+    logDebug "listSchedules(enabledOnly: ${enabledOnly})"
+    def result = apiRequest("/v1/oauth/resources/device/timer/list", "POST", [
+        deviceId: deviceId
+    ])
+    if (result) {
+        def schedules = result.collect { schedule ->
+            [
+                id: schedule.id,
+                effectId: schedule.effectId,
+                startTime: "${schedule.startHour}:${schedule.startMinute.toString().padLeft(2, '0')}",
+                endTime: "${schedule.endHour}:${schedule.endMinute.toString().padLeft(2, '0')}",
+                days: schedule.weekDays,
+                enabled: schedule.enable == 1
+            ]
+        }
+
+        if (enabledOnly) {
+            schedules = schedules.findAll { it.enabled }
+        }
+
+        logDebug "Found ${schedules.size()} schedules"
+        schedules.each { schedule ->
+            log.info "Schedule ${schedule.id}: ${schedule.startTime}-${schedule.endTime}, Days: ${schedule.days}, Effect: ${schedule.effectId}, Enabled: ${schedule.enabled}"
+        }
+        return schedules
+    }
+    return []
+}
+
+def addSchedule(effectId, startTime, endTime, days, enabled=true) {
+    logDebug "addSchedule(effectId: ${effectId}, start: ${startTime}, end: ${endTime}, days: ${days}, enabled: ${enabled})"
+
+    // Parse start and end times
+    def (startHour, startMinute) = startTime.split(":").collect { it.toInteger() }
+    def (endHour, endMinute) = endTime.split(":").collect { it.toInteger() }
+
+    // Parse days string into array
+    def weekDays = days.split(",").collect { it.trim().toInteger() }
+
+    def result = apiRequest("/v1/oauth/resources/device/timer/save", "POST", [
+        deviceId: deviceId,
+        payload: [
+            effectId: effectId,
+            startHour: startHour,
+            startMinute: startMinute,
+            endHour: endHour,
+            endMinute: endMinute,
+            weekDays: weekDays,
+            enable: enabled ? 1 : 0
+        ]
+    ])
+
+    if (result != null) {
+        log.info "Schedule added successfully"
+        // Refresh schedules list
+        listSchedules()
+        return true
+    }
+    log.error "Failed to add schedule"
+    return false
+}
+
+def deleteSchedule(scheduleId) {
+    logDebug "deleteSchedule(${scheduleId})"
+    def result = apiRequest("/v1/oauth/resources/device/timer/delete", "POST", [
+        deviceId: deviceId,
+        payload: [
+            id: scheduleId
+        ]
+    ])
+
+    if (result != null) {
+        log.info "Schedule ${scheduleId} deleted successfully"
+        // Refresh schedules list
+        listSchedules()
+        return true
+    }
+    log.error "Failed to delete schedule ${scheduleId}"
+    return false
+}
+
+def toggleSchedule(scheduleId, enabled) {
+    logDebug "toggleSchedule(${scheduleId}, ${enabled})"
+    def result = apiRequest("/v1/oauth/resources/device/timer/save", "POST", [
+        deviceId: deviceId,
+        payload: [
+            id: scheduleId,
+            enable: enabled ? 1 : 0
+        ]
+    ])
+
+    if (result != null) {
+        log.info "Schedule ${scheduleId} ${enabled ? 'enabled' : 'disabled'} successfully"
+        // Refresh schedules list
+        listSchedules()
+        return true
+    }
+    log.error "Failed to ${enabled ? 'enable' : 'disable'} schedule ${scheduleId}"
+    return false
 }
 
 // Private helper methods
