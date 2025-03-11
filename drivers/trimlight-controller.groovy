@@ -577,6 +577,16 @@ private isScheduleActive(schedule) {
     def scheduleStart = schedule.startTime.hours * 60 + schedule.startTime.minutes
     def scheduleEnd = schedule.endTime.hours * 60 + schedule.endTime.minutes
 
+    // Handle time ranges that cross midnight
+    def isWithinTimeRange
+    if (scheduleEnd < scheduleStart) {
+        // Schedule crosses midnight (e.g., 17:00-00:00 or 23:00-06:00)
+        isWithinTimeRange = currentTime >= scheduleStart || currentTime < scheduleEnd
+    } else {
+        // Normal time range within same day
+        isWithinTimeRange = currentTime >= scheduleStart && currentTime < scheduleEnd
+    }
+
     if (schedule.type == "daily") {
         // Check if schedule is enabled
         if (!schedule.enable) return false
@@ -584,15 +594,15 @@ private isScheduleActive(schedule) {
         // Check repetition type
         switch (schedule.repetition) {
             case 0:  // today only
-                return currentTime >= scheduleStart && currentTime < scheduleEnd
+                return isWithinTimeRange
             case 1:  // everyday
-                return currentTime >= scheduleStart && currentTime < scheduleEnd
+                return isWithinTimeRange
             case 2:  // weekdays
                 def isWeekday = currentDayOfWeek >= Calendar.MONDAY && currentDayOfWeek <= Calendar.FRIDAY
-                return isWeekday && currentTime >= scheduleStart && currentTime < scheduleEnd
+                return isWeekday && isWithinTimeRange
             case 3:  // weekend
                 def isWeekend = currentDayOfWeek == Calendar.SATURDAY || currentDayOfWeek == Calendar.SUNDAY
-                return isWeekend && currentTime >= scheduleStart && currentTime < scheduleEnd
+                return isWeekend && isWithinTimeRange
             default:
                 return false
         }
@@ -612,18 +622,18 @@ private isScheduleActive(schedule) {
         if (scheduleEndDate < scheduleStartDate) {
             // If we're in the start year portion (e.g., Dec 25-31)
             if (currentDate >= scheduleStartDate) {
-                return currentTime >= scheduleStart && currentTime < scheduleEnd
+                return isWithinTimeRange
             }
             // If we're in the end year portion (e.g., Jan 1-5)
             if (currentDate <= scheduleEndDate) {
-                return currentTime >= scheduleStart && currentTime < scheduleEnd
+                return isWithinTimeRange
             }
             return false
         }
 
         // Normal date range within same year
         if (currentDate >= scheduleStartDate && currentDate <= scheduleEndDate) {
-            return currentTime >= scheduleStart && currentTime < scheduleEnd
+            return isWithinTimeRange
         }
     }
 
