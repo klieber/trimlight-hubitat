@@ -34,7 +34,7 @@ metadata {
             [name:"Speed*", type:"NUMBER", description:"Speed (0-255)"],
             [name:"Brightness*", type:"NUMBER", description:"Brightness (0-255)"],
             [name:"PixelLength*", type:"NUMBER", description:"Pixel length (1-90)"],
-            [name:"Reverse", type:"BOOL", description:"Reverse direction"]
+            [name:"Reverse", type:"ENUM", description:"Reverse direction", constraints: ["true", "false"], defaultValue: "false"]
         ]
         command "previewCustomEffect", [
             [name:"Mode*", type:"NUMBER", description:"Effect mode"],
@@ -46,8 +46,10 @@ metadata {
         // Schedule management commands
         command "listSchedules", [[
             name: "Enabled Only",
-            type: "BOOL",
-            description: "Only show enabled schedules"
+            type: "ENUM",
+            description: "Only show enabled schedules",
+            constraints: ["true", "false"],
+            defaultValue: "true"
         ]]
         command "updateDailySchedule", [
             [name:"Schedule ID*", type:"NUMBER", description:"Schedule ID (0 or 1)"],
@@ -55,7 +57,7 @@ metadata {
             [name:"Start Time*", type:"STRING", description:"Start time in HH:mm format"],
             [name:"End Time*", type:"STRING", description:"End time in HH:mm format"],
             [name:"Repetition*", type:"ENUM", description:"Repetition type", constraints: ["today", "everyday", "weekdays", "weekend"]],
-            [name:"Enabled", type:"BOOL", description:"Whether schedule is enabled", defaultValue: true]
+            [name:"Enabled", type:"ENUM", description:"Whether schedule is enabled", constraints: ["true", "false"], defaultValue: "true"]
         ]
         command "addCalendarSchedule", [
             [name:"Effect ID*", type:"NUMBER", description:"Effect ID to use"],
