@@ -146,9 +146,20 @@ def refresh() {
         def mode = modeMap[result.switchState] ?: "off"
         state.deviceMode = mode
         sendEvent(name: "deviceMode", value: mode)
-        sendEvent(name: "switch", value: result.switchState == 0 ? "off" : "on")
+
+        // Determine if switch should be on
+        def switchOn
+        if (mode == "off") {
+            switchOn = false
+        } else if (mode == "manual") {
+            switchOn = true
+        } else {  // timer mode
+            switchOn = hasActiveSchedule(result)
+        }
+
+        sendEvent(name: "switch", value: switchOn ? "on" : "off")
         logDebug "Updated device mode to: ${mode}"
-        logDebug "Updated switch state to: ${result.switchState == 0 ? 'off' : 'on'}"
+        logDebug "Updated switch state to: ${switchOn ? 'on' : 'off'}"
 
         if (result.currentEffect) {
             state.currentEffect = result.currentEffect
@@ -548,4 +559,98 @@ private getDeviceDetails() {
         deviceId: deviceId,
         currentDate: getCurrentDate()
     ])
+}
+
+private isScheduleActive(schedule) {
+    def now = new Date()
+    def cal = Calendar.getInstance()
+    cal.setTime(now)
+
+    def currentHour = cal.get(Calendar.HOUR_OF_DAY)
+    def currentMinute = cal.get(Calendar.MINUTE)
+    def currentMonth = cal.get(Calendar.MONTH) + 1  // Calendar months are 0-based
+    def currentDay = cal.get(Calendar.DAY_OF_MONTH)
+    def currentDayOfWeek = cal.get(Calendar.DAY_OF_WEEK)  // Sunday=1, Monday=2, etc.
+
+    // Convert schedule times to comparable values (minutes since midnight)
+    def currentTime = currentHour * 60 + currentMinute
+    def scheduleStart = schedule.startTime.hours * 60 + schedule.startTime.minutes
+    def scheduleEnd = schedule.endTime.hours * 60 + schedule.endTime.minutes
+
+    if (schedule.type == "daily") {
+        // Check if schedule is enabled
+        if (!schedule.enable) return false
+
+        // Check repetition type
+        switch (schedule.repetition) {
+            case 0:  // today only
+                return currentTime >= scheduleStart && currentTime < scheduleEnd
+            case 1:  // everyday
+                return currentTime >= scheduleStart && currentTime < scheduleEnd
+            case 2:  // weekdays
+                def isWeekday = currentDayOfWeek >= Calendar.MONDAY && currentDayOfWeek <= Calendar.FRIDAY
+                return isWeekday && currentTime >= scheduleStart && currentTime < scheduleEnd
+            case 3:  // weekend
+                def isWeekend = currentDayOfWeek == Calendar.SATURDAY || currentDayOfWeek == Calendar.SUNDAY
+                return isWeekend && currentTime >= scheduleStart && currentTime < scheduleEnd
+            default:
+                return false
+        }
+    } else if (schedule.type == "calendar") {
+        // For calendar schedules, first check if current date falls within schedule dates
+        def startMonth = schedule.startDate.month
+        def startDay = schedule.startDate.day
+        def endMonth = schedule.endDate.month
+        def endDay = schedule.endDate.day
+
+        // Create comparable date values (month * 100 + day)
+        def currentDate = currentMonth * 100 + currentDay
+        def scheduleStartDate = startMonth * 100 + startDay
+        def scheduleEndDate = endMonth * 100 + endDay
+
+        // Handle year wrap (e.g., Dec 25 - Jan 5)
+        if (scheduleEndDate < scheduleStartDate) {
+            // If we're in the start year portion (e.g., Dec 25-31)
+            if (currentDate >= scheduleStartDate) {
+                return currentTime >= scheduleStart && currentTime < scheduleEnd
+            }
+            // If we're in the end year portion (e.g., Jan 1-5)
+            if (currentDate <= scheduleEndDate) {
+                return currentTime >= scheduleStart && currentTime < scheduleEnd
+            }
+            return false
+        }
+
+        // Normal date range within same year
+        if (currentDate >= scheduleStartDate && currentDate <= scheduleEndDate) {
+            return currentTime >= scheduleStart && currentTime < scheduleEnd
+        }
+    }
+
+    return false
+}
+
+private hasActiveSchedule(deviceDetails) {
+    // Check daily schedules
+    def hasActiveDaily = deviceDetails.daily?.any { schedule ->
+        isScheduleActive([
+            type: "daily",
+            enable: schedule.enable,
+            repetition: schedule.repetition,
+            startTime: schedule.startTime,
+            endTime: schedule.endTime
+        ])
+    }
+    if (hasActiveDaily) return true
+
+    // Check calendar schedules
+    return deviceDetails.calendar?.any { schedule ->
+        isScheduleActive([
+            type: "calendar",
+            startDate: schedule.startDate,
+            endDate: schedule.endDate,
+            startTime: schedule.startTime,
+            endTime: schedule.endTime
+        ])
+    }
 }
