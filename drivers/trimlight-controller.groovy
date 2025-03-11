@@ -49,22 +49,26 @@ metadata {
             type: "BOOL",
             description: "Only show enabled schedules"
         ]]
-        command "addSchedule", [
+        command "updateDailySchedule", [
+            [name:"Schedule ID*", type:"NUMBER", description:"Schedule ID (0 or 1)"],
             [name:"Effect ID*", type:"NUMBER", description:"Effect ID to use"],
             [name:"Start Time*", type:"STRING", description:"Start time in HH:mm format"],
             [name:"End Time*", type:"STRING", description:"End time in HH:mm format"],
-            [name:"Days*", type:"STRING", description:"Days of week (e.g. 1,2,3,4,5 for Mon-Fri)"],
+            [name:"Repetition*", type:"ENUM", description:"Repetition type", constraints: ["today", "everyday", "weekdays", "weekend"]],
             [name:"Enabled", type:"BOOL", description:"Whether schedule is enabled", defaultValue: true]
         ]
-        command "deleteSchedule", [[
+        command "addCalendarSchedule", [
+            [name:"Effect ID*", type:"NUMBER", description:"Effect ID to use"],
+            [name:"Start Date*", type:"STRING", description:"Start date in MM-dd format"],
+            [name:"End Date*", type:"STRING", description:"End date in MM-dd format"],
+            [name:"Start Time*", type:"STRING", description:"Start time in HH:mm format"],
+            [name:"End Time*", type:"STRING", description:"End time in HH:mm format"]
+        ]
+        command "deleteCalendarSchedule", [[
             name:"Schedule ID*",
             type:"NUMBER",
-            description:"ID of schedule to delete"
+            description:"ID of calendar schedule to delete"
         ]]
-        command "toggleSchedule", [
-            [name:"Schedule ID*", type:"NUMBER", description:"ID of schedule to toggle"],
-            [name:"Enabled*", type:"BOOL", description:"Enable or disable schedule"]
-        ]
     }
 
     preferences {
@@ -229,70 +233,164 @@ def previewCustomEffect(mode, speed, brightness, pixels) {
 // Schedule management methods
 def listSchedules(Boolean enabledOnly = false) {
     logDebug "listSchedules(enabledOnly: ${enabledOnly})"
-    def result = apiRequest("/v1/oauth/resources/device/timer/list", "POST", [
-        deviceId: deviceId
+    def result = apiRequest("/v1/oauth/resources/device/get", "POST", [
+        deviceId: deviceId,
+        currentDate: getCurrentDate()
     ])
     if (result) {
-        def schedules = result.collect { schedule ->
+        // Process daily schedules
+        def dailySchedules = result.daily.collect { schedule ->
+            def repetitionMap = [
+                0: "today",
+                1: "everyday",
+                2: "weekdays",
+                3: "weekend"
+            ]
             [
+                type: "daily",
                 id: schedule.id,
                 effectId: schedule.effectId,
-                startTime: "${schedule.startHour}:${schedule.startMinute.toString().padLeft(2, '0')}",
-                endTime: "${schedule.endHour}:${schedule.endMinute.toString().padLeft(2, '0')}",
-                days: schedule.weekDays,
-                enabled: schedule.enable == 1
+                startTime: "${schedule.startTime.hours}:${schedule.startTime.minutes.toString().padLeft(2, '0')}",
+                endTime: "${schedule.endTime.hours}:${schedule.endTime.minutes.toString().padLeft(2, '0')}",
+                repetition: repetitionMap[schedule.repetition] ?: "unknown",
+                enabled: schedule.enable
             ]
         }
 
-        if (enabledOnly) {
-            schedules = schedules.findAll { it.enabled }
+        // Process calendar schedules
+        def calendarSchedules = result.calendar.collect { schedule ->
+            [
+                type: "calendar",
+                id: schedule.id,
+                effectId: schedule.effectId,
+                startDate: "${schedule.startDate.month}-${schedule.startDate.day}",
+                endDate: "${schedule.endDate.month}-${schedule.endDate.day}",
+                startTime: "${schedule.startTime.hours}:${schedule.startTime.minutes.toString().padLeft(2, '0')}",
+                endTime: "${schedule.endTime.hours}:${schedule.endTime.minutes.toString().padLeft(2, '0')}"
+            ]
         }
 
-        logDebug "Found ${schedules.size()} schedules"
-        schedules.each { schedule ->
-            log.info "Schedule ${schedule.id}: ${schedule.startTime}-${schedule.endTime}, Days: ${schedule.days}, Effect: ${schedule.effectId}, Enabled: ${schedule.enabled}"
+        // Filter enabled schedules if requested
+        if (enabledOnly) {
+            dailySchedules = dailySchedules.findAll { it.enabled }
         }
-        return schedules
+
+        // Log schedules
+        logDebug "Found ${dailySchedules.size()} daily schedules and ${calendarSchedules.size()} calendar schedules"
+
+        dailySchedules.each { schedule ->
+            log.info "Daily Schedule ${schedule.id}: ${schedule.startTime}-${schedule.endTime}, Repetition: ${schedule.repetition}, Effect: ${schedule.effectId}, Enabled: ${schedule.enabled}"
+        }
+
+        calendarSchedules.each { schedule ->
+            log.info "Calendar Schedule ${schedule.id}: ${schedule.startDate} to ${schedule.endDate}, ${schedule.startTime}-${schedule.endTime}, Effect: ${schedule.effectId}"
+        }
+
+        return [daily: dailySchedules, calendar: calendarSchedules]
     }
-    return []
+    return [daily: [], calendar: []]
 }
 
-def addSchedule(effectId, startTime, endTime, days, enabled=true) {
-    logDebug "addSchedule(effectId: ${effectId}, start: ${startTime}, end: ${endTime}, days: ${days}, enabled: ${enabled})"
+def updateDailySchedule(scheduleId, effectId, startTime, endTime, repetition, enabled=true) {
+    logDebug "updateDailySchedule(id: ${scheduleId}, effectId: ${effectId}, start: ${startTime}, end: ${endTime}, repetition: ${repetition}, enabled: ${enabled})"
+
+    // Validate schedule ID
+    if (scheduleId != 0 && scheduleId != 1) {
+        log.error "Invalid daily schedule ID: ${scheduleId}. Must be 0 or 1."
+        return false
+    }
 
     // Parse start and end times
     def (startHour, startMinute) = startTime.split(":").collect { it.toInteger() }
     def (endHour, endMinute) = endTime.split(":").collect { it.toInteger() }
 
-    // Parse days string into array
-    def weekDays = days.split(",").collect { it.trim().toInteger() }
+    // Map repetition string to value
+    def repetitionMap = [
+        "today": 0,
+        "everyday": 1,
+        "weekdays": 2,
+        "weekend": 3
+    ]
+    def repetitionValue = repetitionMap[repetition]
+    if (repetitionValue == null) {
+        log.error "Invalid repetition value: ${repetition}"
+        return false
+    }
 
-    def result = apiRequest("/v1/oauth/resources/device/timer/save", "POST", [
+    def result = apiRequest("/v1/oauth/resources/device/daily/save", "POST", [
         deviceId: deviceId,
         payload: [
+            id: scheduleId,
+            enable: enabled,
             effectId: effectId,
-            startHour: startHour,
-            startMinute: startMinute,
-            endHour: endHour,
-            endMinute: endMinute,
-            weekDays: weekDays,
-            enable: enabled ? 1 : 0
+            repetition: repetitionValue,
+            startTime: [
+                hours: startHour,
+                minutes: startMinute
+            ],
+            endTime: [
+                hours: endHour,
+                minutes: endMinute
+            ],
+            currentDate: getCurrentDate()
         ]
     ])
 
     if (result != null) {
-        log.info "Schedule added successfully"
-        // Refresh schedules list
-        listSchedules()
+        log.info "Daily schedule ${scheduleId} updated successfully"
+        refresh()  // Refresh device state to get updated schedules
         return true
     }
-    log.error "Failed to add schedule"
+    log.error "Failed to update daily schedule"
     return false
 }
 
-def deleteSchedule(scheduleId) {
-    logDebug "deleteSchedule(${scheduleId})"
-    def result = apiRequest("/v1/oauth/resources/device/timer/delete", "POST", [
+def addCalendarSchedule(effectId, startDate, endDate, startTime, endTime) {
+    logDebug "addCalendarSchedule(effectId: ${effectId}, startDate: ${startDate}, endDate: ${endDate}, startTime: ${startTime}, endTime: ${endTime})"
+
+    // Parse dates
+    def (startMonth, startDay) = startDate.split("-").collect { it.toInteger() }
+    def (endMonth, endDay) = endDate.split("-").collect { it.toInteger() }
+
+    // Parse times
+    def (startHour, startMinute) = startTime.split(":").collect { it.toInteger() }
+    def (endHour, endMinute) = endTime.split(":").collect { it.toInteger() }
+
+    def result = apiRequest("/v1/oauth/resources/device/calendar/save", "POST", [
+        deviceId: deviceId,
+        payload: [
+            effectId: effectId,
+            startDate: [
+                month: startMonth,
+                day: startDay
+            ],
+            endDate: [
+                month: endMonth,
+                day: endDay
+            ],
+            startTime: [
+                hours: startHour,
+                minutes: startMinute
+            ],
+            endTime: [
+                hours: endHour,
+                minutes: endMinute
+            ]
+        ]
+    ])
+
+    if (result != null) {
+        log.info "Calendar schedule added successfully"
+        refresh()  // Refresh device state to get updated schedules
+        return true
+    }
+    log.error "Failed to add calendar schedule"
+    return false
+}
+
+def deleteCalendarSchedule(scheduleId) {
+    logDebug "deleteCalendarSchedule(${scheduleId})"
+    def result = apiRequest("/v1/oauth/resources/device/calendar/delete", "POST", [
         deviceId: deviceId,
         payload: [
             id: scheduleId
@@ -300,32 +398,11 @@ def deleteSchedule(scheduleId) {
     ])
 
     if (result != null) {
-        log.info "Schedule ${scheduleId} deleted successfully"
-        // Refresh schedules list
-        listSchedules()
+        log.info "Calendar schedule ${scheduleId} deleted successfully"
+        refresh()  // Refresh device state to get updated schedules
         return true
     }
-    log.error "Failed to delete schedule ${scheduleId}"
-    return false
-}
-
-def toggleSchedule(scheduleId, enabled) {
-    logDebug "toggleSchedule(${scheduleId}, ${enabled})"
-    def result = apiRequest("/v1/oauth/resources/device/timer/save", "POST", [
-        deviceId: deviceId,
-        payload: [
-            id: scheduleId,
-            enable: enabled ? 1 : 0
-        ]
-    ])
-
-    if (result != null) {
-        log.info "Schedule ${scheduleId} ${enabled ? 'enabled' : 'disabled'} successfully"
-        // Refresh schedules list
-        listSchedules()
-        return true
-    }
-    log.error "Failed to ${enabled ? 'enable' : 'disable'} schedule ${scheduleId}"
+    log.error "Failed to delete calendar schedule ${scheduleId}"
     return false
 }
 
