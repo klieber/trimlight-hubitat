@@ -134,10 +134,7 @@ def setColor(Map colorMap) {
 
 def refresh() {
     logDebug "refresh()"
-    def result = apiRequest("/v1/oauth/resources/device/get", "POST", [
-        deviceId: deviceId,
-        currentDate: getCurrentDate()
-    ])
+    def result = getDeviceDetails()
     logDebug "refresh() response: ${result}"
     if (result) {
         // Map switchState to both switch and deviceMode
@@ -233,10 +230,7 @@ def previewCustomEffect(mode, speed, brightness, pixels) {
 // Schedule management methods
 def listSchedules(Boolean enabledOnly = false) {
     logDebug "listSchedules(enabledOnly: ${enabledOnly})"
-    def result = apiRequest("/v1/oauth/resources/device/get", "POST", [
-        deviceId: deviceId,
-        currentDate: getCurrentDate()
-    ])
+    def result = getDeviceDetails()
     if (result) {
         // Process daily schedules
         def dailySchedules = result.daily.collect { schedule ->
@@ -546,4 +540,12 @@ private getCurrentDate() {
 
 private now() {
     return new Date().getTime()
+}
+
+private getDeviceDetails() {
+    logDebug "getDeviceDetails()"
+    return apiRequest("/v1/oauth/resources/device/get", "POST", [
+        deviceId: deviceId,
+        currentDate: getCurrentDate()
+    ])
 }
