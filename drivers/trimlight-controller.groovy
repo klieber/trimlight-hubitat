@@ -30,7 +30,25 @@ metadata {
             description: "Set the device operating mode",
             constraints: ["off", "manual", "timer"]
         ]]
-        command "setEffect", [[name:"Effect ID*", type:"NUMBER", description:"Effect ID to activate"]]
+        command "viewEffect", [[name:"Effect ID*", type:"NUMBER", description:"Effect ID to view"]]
+        command "saveBuiltinEffect", [
+            [name:"Effect ID", type:"NUMBER", description:"Effect ID to update (-1 for new effect)"],
+            [name:"Name*", type:"STRING", description:"Effect name"],
+            [name:"Mode*", type:"NUMBER", description:"Effect mode (0-179)"],
+            [name:"Speed*", type:"NUMBER", description:"Speed (0-255)"],
+            [name:"Brightness*", type:"NUMBER", description:"Brightness (0-255)"],
+            [name:"PixelLength*", type:"NUMBER", description:"Pixel length (1-90)"],
+            [name:"Reverse", type:"ENUM", description:"Reverse direction", constraints: ["true", "false"], defaultValue: "false"]
+        ]
+        command "saveCustomEffect", [
+            [name:"Effect ID", type:"NUMBER", description:"Effect ID to update (-1 for new effect)"],
+            [name:"Name*", type:"STRING", description:"Effect name"],
+            [name:"Mode*", type:"NUMBER", description:"Effect mode (0-16)"],
+            [name:"Speed*", type:"NUMBER", description:"Speed (0-255)"],
+            [name:"Brightness*", type:"NUMBER", description:"Brightness (0-255)"],
+            [name:"Pixels*", type:"JSON_OBJECT", description:"Array of pixel objects with index, count, color, and disable fields"]
+        ]
+        command "deleteEffect", [[name:"Effect ID*", type:"NUMBER", description:"Effect ID to delete"]]
         command "setEffectSpeed", [[name:"Speed*", type:"NUMBER", description:"Speed (0-255)"]]
         command "previewBuiltinEffect", [
             [name:"Mode*", type:"NUMBER", description:"Effect mode (0-179)"],
@@ -218,8 +236,8 @@ void poll() {
 }
 
 // Custom command implementations
-def setEffect(effectId) {
-    logDebug "setEffect(${effectId})"
+def viewEffect(effectId) {
+    logDebug "viewEffect(${effectId})"
     def result = apiRequest("/v1/oauth/resources/device/effect/view", "POST", [
         deviceId: deviceId,
         payload: [
@@ -230,6 +248,72 @@ def setEffect(effectId) {
         refresh()  // Update device state after changing effect
         return true
     }
+    return false
+}
+
+def saveBuiltinEffect(effectId, name, mode, speed, brightness, pixelLength, reverse) {
+    logDebug "saveBuiltinEffect(id: ${effectId}, name: ${name}, mode: ${mode}, speed: ${speed}, brightness: ${brightness}, pixelLength: ${pixelLength}, reverse: ${reverse})"
+
+    def result = apiRequest("/v1/oauth/resources/device/effect/save", "POST", [
+        deviceId: deviceId,
+        payload: [
+            id: effectId,
+            name: name,
+            category: 1,  // Built-in effects are always category 1
+            mode: mode,
+            speed: speed,
+            brightness: brightness,
+            pixelLen: pixelLength,
+            reverse: (reverse == "true")
+        ]
+    ])
+    if (result != null) {
+        log.info "Built-in effect saved successfully with ID: ${result.id}"
+        refresh()  // Update device state to get new effect list
+        return true
+    }
+    log.error "Failed to save built-in effect"
+    return false
+}
+
+def saveCustomEffect(effectId, name, mode, speed, brightness, pixels) {
+    logDebug "saveCustomEffect(id: ${effectId}, name: ${name}, mode: ${mode}, speed: ${speed}, brightness: ${brightness}, pixels: ${pixels})"
+
+    def result = apiRequest("/v1/oauth/resources/device/effect/save", "POST", [
+        deviceId: deviceId,
+        payload: [
+            id: effectId,
+            name: name,
+            category: 2,  // Custom effects are always category 2
+            mode: mode,
+            speed: speed,
+            brightness: brightness,
+            pixels: pixels
+        ]
+    ])
+    if (result != null) {
+        log.info "Custom effect saved successfully with ID: ${result.id}"
+        refresh()  // Update device state to get new effect list
+        return true
+    }
+    log.error "Failed to save custom effect"
+    return false
+}
+
+def deleteEffect(effectId) {
+    logDebug "deleteEffect(${effectId})"
+    def result = apiRequest("/v1/oauth/resources/device/effect/delete", "POST", [
+        deviceId: deviceId,
+        payload: [
+            id: effectId
+        ]
+    ])
+    if (result != null) {
+        log.info "Effect ${effectId} deleted successfully"
+        refresh()  // Update device state to get new effect list
+        return true
+    }
+    log.error "Failed to delete effect ${effectId}"
     return false
 }
 
@@ -471,8 +555,6 @@ private setDeviceMode(String mode) {
         log.error "Invalid mode: ${mode}"
         return false
     }
-
-
 
     def result = setDeviceSwitchState(modeValue)
     if (result) {
