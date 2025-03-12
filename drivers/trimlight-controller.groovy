@@ -8,6 +8,8 @@
  *  Licensed under the MIT License
  */
 
+import java.time.LocalTime
+
 metadata {
     definition (
         name: "Trimlight Controller",
@@ -19,6 +21,7 @@ metadata {
         capability "SwitchLevel"
         capability "ColorControl"
         capability "Refresh"
+        capability 'Polling'
 
         // Custom commands
         command "setDeviceMode", [[
@@ -77,23 +80,41 @@ metadata {
         input name: "clientId", type: "text", title: "Client ID", required: true
         input name: "clientSecret", type: "password", title: "Client Secret", required: true
         input name: "deviceId", type: "text", title: "Device ID", required: true
-        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+        input name: 'pollInterval',
+          type: 'enum',
+          title: 'Poll Interval',
+          options: [
+            0:'off',
+            60:'1 minute',
+            120:'2 minutes',
+            180:'3 minutes',
+            300:'5 minutes',
+            600:'10 minutes',
+            900:'15 minutes',
+            1800:'30 minutes',
+            3600:'60 minutes'
+          ],
+          required: true,
+          defaultValue: '600'
+        input name: "logLevel", type: "enum", title: "Log level", defaultValue: "INFO", options: [ "INFO", "DEBUG", "TRACE"]
     }
 }
 
 def installed() {
-    log.debug "Installed..."
+    logDebug "Installed..."
     initialize()
+    poll()
 }
 
 def updated() {
-    log.debug "Updated..."
+    logDebug "Updated..."
     initialize()
+    poll()
 }
 
 def initialize() {
-    log.debug "Initializing..."
-    refresh()
+    logDebug "Initializing..."
+    poll()
 }
 
 def parse(String description) {
@@ -137,7 +158,6 @@ def setColor(Map colorMap) {
 def refresh() {
     logDebug "refresh()"
     def result = getDeviceDetails()
-    logDebug "refresh() response: ${result}"
     if (result) {
         // Map switchState to both switch and deviceMode
         def modeMap = [
@@ -171,10 +191,30 @@ def refresh() {
                 logDebug "Updated brightness level to: ${level}"
             }
         }
+        logDebug "refresh() success"
         return true
     }
-    logDebug "refresh() failed - no response data"
+    logDebug "refresh() failed"
     return false
+}
+
+void poll() {
+  // maybe poll interval is now zero
+  unschedule(refresh)
+  // build out a cron string for pollInterval options 1 min -- 60 min
+  if (pollInterval > '0') {
+    LocalTime now = LocalTime.now()
+    Integer minutes = pollInterval.toInteger() / 60
+    Integer hours = minutes / 60
+
+    String cronMinute = (minutes == 60 || minutes == 0) ? "${now.minute}" : "${now.minute % minutes}/$minutes"
+    String cronHour = (hours < 1) ? '*' : "*/$hours"
+
+    schedule("0 $cronMinute $cronHour ? * *", refresh)
+  }
+
+  // clicking Poll means do at least one refresh, even if there's no poll interval
+  refresh()
 }
 
 // Custom command implementations
@@ -416,6 +456,11 @@ def deleteCalendarSchedule(scheduleId) {
 // Private helper methods
 private setDeviceMode(String mode) {
     logDebug "setDeviceMode(${mode})"
+
+    if (state.deviceMode == mode) {
+        return true
+    }
+
     def modeMap = [
         "off": 0,
         "manual": 1,
@@ -426,6 +471,8 @@ private setDeviceMode(String mode) {
         log.error "Invalid mode: ${mode}"
         return false
     }
+
+
 
     def result = setDeviceSwitchState(modeValue)
     if (result) {
@@ -453,8 +500,14 @@ private setDeviceSwitchState(state) {
 }
 
 private logDebug(msg) {
-    if (logEnable) {
+    if (logLevel == "DEBUG" || logLevel == "TRACE") {
         log.debug msg
+    }
+}
+
+private logTrace(msg) {
+    if (logLevel == "TRACE") {
+        log.trace msg
     }
 }
 
@@ -485,8 +538,8 @@ private apiRequest(String path, String method = "GET", Map body = null) {
     }
 
     logDebug "API Request - URL: ${params.uri}"
-    logDebug "API Request - Headers: ${headers}"
-    logDebug "API Request - Body: ${params.body}"
+    logTrace "API Request - Headers: ${headers}"
+    logTrace "API Request - Body: ${params.body}"
 
     try {
         def resp
@@ -506,10 +559,9 @@ private apiRequest(String path, String method = "GET", Map body = null) {
         }
 
         logDebug "Response received - Status: ${resp.status}"
-        logDebug "Response headers: ${resp.headers}"
-
+        logTrace "Response headers: ${resp.headers}"
+        logTrace "Raw response: ${resp.data}"
         if (resp.data) {
-            logDebug "Parsed response: ${resp.data}"
             if (resp.data.code == 0) {
                 return resp.data.payload
             } else {
@@ -517,7 +569,6 @@ private apiRequest(String path, String method = "GET", Map body = null) {
             }
         } else {
             log.error "Response status ${resp.status} but no data received"
-            logDebug "Raw response: ${resp}"
         }
     } catch (e) {
         log.error "API request failed: ${e.message}"
